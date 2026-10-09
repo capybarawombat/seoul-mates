@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   deploy:
-    if: vars.SEOUL_MATES_WSS_URL != ''
     runs-on: ubuntu-latest
     environment:
       name: github-pages
