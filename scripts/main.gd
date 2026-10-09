@@ -29,7 +29,6 @@ var last_stir_angle := 0.0
 var drag_distance := 0.0
 var toast_time := 0.0
 var menu_open := true
-var sound_enabled := true
 var server_mode := false
 var online := false
 var positions: Dictionary = {}
@@ -172,8 +171,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if event.keycode == KEY_F5:
 		if not online: state.save_game()
 		state.message = "Restaurant saved."
-	if event.keycode == KEY_M:
-		sound_enabled = not sound_enabled
 	if event.keycode == KEY_N:
 		_connect_server()
 

@@ -16,7 +16,7 @@ The Godot download is at the [official Linux page](https://godotengine.org/downl
 godot --path .
 ```
 
-Press Enter to enter the kitchen, then Enter again to open a shift. Use WASD or arrow keys to walk. Select an ingredient with 1–6 and press E at the shelf to carry it. Press E at the stove to open a cooking session and add what you carry. Chop fish cake or scallion at the prep board by dragging across it or pressing E repeatedly. Open the stove panel and drag the heat slider; drag circles inside the pot to stir. Press Escape to leave the panel. Press E three times at the plating counter, then E at the occupied table to serve. F5 saves day, money and inventory. M toggles the pending sound setting; audio is not implemented yet.
+Press Enter to enter the kitchen, then Enter again to open a shift. Use WASD or arrow keys to walk. Select an ingredient with 1–6 and press E at the shelf to carry it. Press E at the stove to open a cooking session and add what you carry. Chop fish cake or scallion at the prep board by dragging across it or pressing E repeatedly. Open the stove panel and drag the heat slider; drag circles inside the pot to stir. Press Escape to leave the panel. Press E three times at the plating counter, then E at the occupied table to serve. F5 saves day, money and inventory.
 
 ## Local co-op
 
@@ -47,6 +47,6 @@ godot --headless --path . --script tests/test_state.gd
 godot --headless --path . --quit-after 2
 ```
 
-`tests/network_client.gd` is the scripted two-process local co-op scenario. Its exact run and limits are in [docs/TEST_REPORT.md](docs/TEST_REPORT.md). Browser smoke helpers use Firefox, geckodriver and a local HTTP server.
+`tests/network_client.gd` is the scripted two-process local co-op scenario. Start a fresh test server with `SEOUL_MATES_SAVE_PATH=user://coop_test.json godot --headless --path . -- --server`, then run `godot --headless --path . --script tests/network_client.gd -- A` and `godot --headless --path . --script tests/network_client.gd -- B` in separate terminals. Run role C after both finish to check a new client joining the room. `SEOUL_MATES_SAVE_PATH` keeps integration test data separate from normal play. Browser smoke helpers use Firefox, geckodriver and a local HTTP server. Test results and limits are in [docs/TEST_REPORT.md](docs/TEST_REPORT.md).
 
 Current scope and known limits are in [docs/DEVELOPMENT_STATUS.md](docs/DEVELOPMENT_STATUS.md).
