@@ -1,0 +1,18 @@
+name: Godot checks
+on: [push, pull_request]
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Godot
+        run: |
+          curl -L --fail --silent --show-error -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip godot.zip
+          chmod +x Godot_v4.7.2-stable_linux.x86_64
+      - name: Import and parse
+        run: ./Godot_v4.7.2-stable_linux.x86_64 --headless --path . --editor --quit
+      - name: Restaurant simulation
+        run: ./Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script tests/test_state.gd
+      - name: Scene startup
+        run: ./Godot_v4.7.2-stable_linux.x86_64 --headless --path . --quit-after 2

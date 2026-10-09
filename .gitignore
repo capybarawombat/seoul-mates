@@ -1,0 +1,6 @@
+.godot/
+build/
+*.log
+.env
+*.secret
+*.key

@@ -1,0 +1,20 @@
+{
+  "tteokbokki": {
+    "name": "Classic Tteokbokki",
+    "ingredients": {"rice_cake": 1, "fish_cake": 1, "gochujang": 1},
+    "chop": "fish_cake",
+    "ideal_temperature": [0.55, 0.76],
+    "target_doneness": 0.78,
+    "target_mixing": 0.70,
+    "price": 18
+  },
+  "ramyeon": {
+    "name": "Cozy Ramyeon",
+    "ingredients": {"noodles": 1, "broth": 1, "scallion": 1},
+    "chop": "scallion",
+    "ideal_temperature": [0.62, 0.83],
+    "target_doneness": 0.72,
+    "target_mixing": 0.55,
+    "price": 16
+  }
+}
