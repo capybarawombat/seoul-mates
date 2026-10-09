@@ -14,9 +14,13 @@ OUTPUT = ROOT / "build" / "web"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wss-url", required=True, help="Public WSS endpoint, for example wss://game.example.com/socket")
+    parser.add_argument(
+        "--wss-url",
+        default="",
+        help="Optional public WSS endpoint",
+    )
     args = parser.parse_args()
-    if not args.wss_url.startswith("wss://"):
+    if args.wss_url and not args.wss_url.startswith("wss://"):
         parser.error("--wss-url must begin with wss://")
     godot = os.environ.get("SEOUL_GODOT") or shutil.which("godot") or shutil.which("godot4")
     if not godot:
