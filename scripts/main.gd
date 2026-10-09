@@ -36,9 +36,26 @@ var network_clock := 0.0
 var network_status := "SOLO"
 var last_sent_position := Vector2(470, 460)
 var move_clock: Dictionary = {}
+var debug_clock := 0.0
+var player_colors: Dictionary = {}
+var player_facings: Dictionary = {}
+var player_walking: Dictionary = {}
+var snapshot_seq := 0
+var last_snapshot_seq := -1
+var pending_spawn_sync := false
+var sfx_player: AudioStreamPlayer
+var sfx_muted := false
+var sfx_volume := 0.7
 
 func _ready() -> void:
 	server_mode = OS.get_cmdline_user_args().has("--server")
+	if not server_mode:
+		var generator := AudioStreamGenerator.new()
+		generator.mix_rate = 22050.0
+		generator.buffer_length = 0.3
+		sfx_player = AudioStreamPlayer.new()
+		sfx_player.stream = generator
+		add_child(sfx_player)
 	var alternate_save := OS.get_environment("SEOUL_MATES_SAVE_PATH")
 	if alternate_save != "": state.save_path = alternate_save
 	state.load_game()
@@ -82,13 +99,18 @@ func _process(delta: float) -> void:
 			if network_clock >= 0.1 or player.distance_to(last_sent_position) > 8.0:
 				network_clock = 0.0
 				last_sent_position = player
-				submit_position.rpc_id(1, player)
+				submit_position.rpc_id(1, player, facing, moving)
 	if server_mode:
 		state.tick(delta)
 		network_clock += delta
 		if network_clock >= 0.1:
 			network_clock = 0.0
 			_broadcast_snapshot()
+	if OS.has_feature("web") and OS.has_feature("debug"):
+		debug_clock += delta
+		if debug_clock >= 0.1:
+			debug_clock = 0.0
+			_publish_debug_state()
 	toast_time = maxf(0.0, toast_time - delta)
 	queue_redraw()
 
@@ -115,6 +137,7 @@ func _nearest_station(pos: Vector2 = Vector2.INF) -> String:
 	return best
 
 func _interact() -> void:
+	_play_sfx(_nearest_station())
 	if online:
 		if _nearest_station() == "stove" and not state.session.is_empty(): panel_open = true
 		request_action.rpc_id(1, "interact", selected_item, 0.0)
@@ -171,6 +194,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if event.keycode == KEY_F5:
 		if not online: state.save_game()
 		state.message = "Restaurant saved."
+	if event.keycode == KEY_M:
+		sfx_muted = not sfx_muted
+	if event.keycode == KEY_BRACKETLEFT:
+		sfx_volume = maxf(0.0, sfx_volume - 0.1)
+	if event.keycode == KEY_BRACKETRIGHT:
+		sfx_volume = minf(1.0, sfx_volume + 0.1)
 	if event.keycode == KEY_N:
 		_connect_server()
 
@@ -189,8 +218,10 @@ func _input(event: InputEvent) -> void:
 					return
 				if panel_open:
 					if Rect2(270, 458, 420, 34).has_point(p):
+						_play_sfx("dial")
 						_set_heat(clampf((p.x - 270.0) / 420.0, 0.0, 1.0))
 					if Rect2(712, 138, 42, 37).has_point(p): panel_open = false
+					if p.distance_to(Vector2(480, 333)) < 100.0: _play_sfx("stir")
 					last_stir_angle = (p - Vector2(480, 333)).angle()
 				else:
 					if SHELF.grow(12).has_point(p) and player.distance_to(_closest(SHELF, player)) < 95: _interact()
@@ -225,6 +256,31 @@ func _chop(value: float) -> void:
 	if online: request_action.rpc_id(1, "chop", 0, value)
 	else: state.chop(value)
 
+func _play_sfx(kind: String) -> void:
+	if server_mode or sfx_muted or sfx_volume <= 0.0 or sfx_player == null:
+		return
+	if not sfx_player.playing:
+		sfx_player.play()
+	var playback := sfx_player.get_stream_playback() as AudioStreamGeneratorPlayback
+	if playback == null:
+		return
+	var frequency := 390.0
+	match kind:
+		"prep": frequency = 280.0
+		"stove", "stir": frequency = 330.0
+		"plate": frequency = 590.0
+		"table": frequency = 740.0
+		"dial": frequency = 440.0
+	var sample_count := mini(playback.get_frames_available(), 2500)
+	var frames := PackedVector2Array()
+	frames.resize(sample_count)
+	for i in range(sample_count):
+		var progress := float(i) / float(maxi(sample_count, 1))
+		var envelope := (1.0 - progress) * (1.0 - progress)
+		var tone := sin(TAU * frequency * float(i) / 22050.0) * envelope * 0.14 * sfx_volume
+		frames[i] = Vector2(tone, tone)
+	playback.push_buffer(frames)
+
 func _connect_server() -> void:
 	if online or server_mode: return
 	var url := "ws://127.0.0.1:9090"
@@ -249,6 +305,8 @@ func _server_connected() -> void:
 	online = true
 	network_status = "ROOM SEOUL · CONNECTED"
 	menu_open = false
+	pending_spawn_sync = true
+	last_snapshot_seq = -1
 
 func _server_failed() -> void:
 	online = false
@@ -265,12 +323,21 @@ func _peer_joined(id: int) -> void:
 		multiplayer.multiplayer_peer.disconnect_peer(id)
 		return
 	positions[str(id)] = Vector2(475 + id % 3 * 24, 470)
+	var color_index := 0
+	while player_colors.values().has(color_index):
+		color_index += 1
+	player_colors[str(id)] = color_index
+	player_facings[str(id)] = Vector2.DOWN
+	player_walking[str(id)] = false
 	move_clock[str(id)] = Time.get_ticks_msec()
 	print("Player %d joined room SEOUL" % id)
 	_broadcast_snapshot()
 
 func _peer_left(id: int) -> void:
 	positions.erase(str(id))
+	player_colors.erase(str(id))
+	player_facings.erase(str(id))
+	player_walking.erase(str(id))
 	move_clock.erase(str(id))
 	state.carried_by.erase(str(id))
 	state.release_stove(id)
@@ -279,7 +346,7 @@ func _peer_left(id: int) -> void:
 	_broadcast_snapshot()
 
 @rpc("any_peer", "call_remote", "unreliable")
-func submit_position(pos: Vector2) -> void:
+func submit_position(pos: Vector2, look: Vector2, walking_now: bool) -> void:
 	if not server_mode: return
 	var id := multiplayer.get_remote_sender_id()
 	if not positions.has(str(id)) or not _can_walk(pos): return
@@ -291,6 +358,8 @@ func submit_position(pos: Vector2) -> void:
 	for step in range(1, parts + 1):
 		if not _can_walk(old.lerp(pos, float(step) / float(parts))): return
 	positions[str(id)] = pos
+	player_facings[str(id)] = look.normalized() if look.length_squared() > 0.01 else Vector2.DOWN
+	player_walking[str(id)] = walking_now
 	move_clock[str(id)] = now
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -313,14 +382,49 @@ func request_action(action: String, item_index: int, value: float) -> void:
 
 func _broadcast_snapshot() -> void:
 	if server_mode and multiplayer.multiplayer_peer != null:
-		receive_snapshot.rpc(state.snapshot(), positions)
+		snapshot_seq += 1
+		receive_snapshot.rpc(snapshot_seq, state.snapshot(), positions, player_colors, player_facings, player_walking)
 
 @rpc("authority", "call_remote", "unreliable")
-func receive_snapshot(data: Dictionary, player_positions: Dictionary) -> void:
+func receive_snapshot(seq: int, data: Dictionary, player_positions: Dictionary, colors: Dictionary, facings: Dictionary, walking_flags: Dictionary) -> void:
 	if server_mode: return
+	if seq <= last_snapshot_seq: return
+	last_snapshot_seq = seq
 	state.apply_snapshot(data)
 	positions = player_positions
+	player_colors = colors
+	player_facings = facings
+	player_walking = walking_flags
+	if pending_spawn_sync and positions.has(str(multiplayer.get_unique_id())):
+		player = positions[str(multiplayer.get_unique_id())]
+		last_sent_position = player
+		pending_spawn_sync = false
 	if panel_open and state.session.is_empty(): panel_open = false
+
+func _publish_debug_state() -> void:
+	var peers: Dictionary = {}
+	for id in positions:
+		var pos: Vector2 = positions[id]
+		peers[str(id)] = [pos.x, pos.y]
+	var data := {
+		"online": online,
+		"peer_id": multiplayer.get_unique_id(),
+		"position": [player.x, player.y],
+		"peers": peers,
+		"colors": player_colors,
+		"carried": state.held(multiplayer.get_unique_id() if online else 1),
+		"inventory": state.inventory,
+		"session": state.session,
+		"dish": state.dish,
+		"phase": state.phase,
+		"customer_stage": state.customer_stage,
+		"served": state.served,
+		"money": state.money,
+		"order": state.order,
+		"panel_open": panel_open,
+		"message": state.message
+	}
+	JavaScriptBridge.eval("window.__SEOUL_TEST_STATE = " + JSON.stringify(data))
 
 func _draw() -> void:
 	draw_rect(Rect2(0, 0, 960, 640), BG)
@@ -332,12 +436,20 @@ func _draw() -> void:
 	_draw_table(TABLE, true)
 	_draw_table(Rect2(205, 360, 100, 78), false)
 	_draw_table(Rect2(335, 355, 83, 78), false)
-	_draw_customer()
+	var actors: Array[Dictionary] = []
+	if state.phase == "OPEN" and state.customer_stage != "absent":
+		actors.append({"kind": "customer", "y": state.customer_position.y})
 	if online:
 		for id in positions:
 			if int(id) != multiplayer.get_unique_id():
-				_draw_teammate(positions[id], int(id))
-	_draw_player()
+				actors.append({"kind": "teammate", "y": positions[id].y, "id": int(id), "pos": positions[id]})
+	actors.append({"kind": "player", "y": player.y})
+	actors.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["y"]) < float(b["y"]))
+	for actor in actors:
+		match actor["kind"]:
+			"customer": _draw_customer()
+			"teammate": _draw_teammate(actor["pos"], actor["id"])
+			"player": _draw_player()
 	_draw_hud()
 	if panel_open and not state.session.is_empty(): _draw_cooking_panel()
 	if menu_open: _draw_menu()
@@ -361,6 +473,12 @@ func _draw_room() -> void:
 		var light_x := 84 + i * 88
 		draw_circle(Vector2(light_x, 70), 3, GOLD)
 		draw_circle(Vector2(light_x, 75), 2, Color("f6dfb2"))
+	for pos in [Vector2(120, 318), Vector2(843, 493)]:
+		draw_rect(Rect2(pos.x - 10, pos.y + 8, 20, 17), Color("9e645c"))
+		draw_rect(Rect2(pos.x - 8, pos.y + 10, 16, 10), Color("c88369"))
+		for offset in [Vector2(-11, 3), Vector2(0, -7), Vector2(10, 1)]:
+			draw_circle(pos + offset, 9, Color("719c78"))
+			draw_circle(pos + offset + Vector2(-3, -3), 3, Color("9bc398"))
 
 func _draw_station(rect: Rect2, title: String, color: Color, kind: int) -> void:
 	draw_rect(Rect2(rect.position + Vector2(0, 7), rect.size), Color("735b61"))
@@ -374,13 +492,22 @@ func _draw_station(rect: Rect2, title: String, color: Color, kind: int) -> void:
 		1:
 			draw_rect(Rect2(rect.position + Vector2(18, 21), Vector2(74, 42)), Color("f4d8aa"))
 			for i in range(4): draw_line(rect.position + Vector2(25 + i * 18, 29), rect.position + Vector2(39 + i * 18, 55), Color("b7786a"), 3)
+			if not state.session.is_empty() and float(state.session["chop_progress"]) > 0.0:
+				draw_rect(Rect2(rect.position + Vector2(20, 67), Vector2(70 * float(state.session["chop_progress"]), 4)), MINT)
 		2:
 			draw_circle(rect.position + Vector2(64, 40), 30, Color("424b56"))
 			draw_circle(rect.position + Vector2(64, 40), 23, Color("d77c59"))
 			for i in range(4): draw_circle(rect.position + Vector2(48 + i * 10, 39 + (i % 2) * 9), 4, CREAM)
+			if not state.session.is_empty() and float(state.session["temperature"]) > 0.35:
+				for i in range(3):
+					var lift := sin(float(Time.get_ticks_msec()) / 330.0 + float(i)) * 3.0
+					draw_line(rect.position + Vector2(44 + i * 20, 8 + lift), rect.position + Vector2(48 + i * 20, -8 + lift), Color("f7e5c8", 0.75), 3)
 		3:
 			draw_circle(rect.position + Vector2(55, 41), 32, Color("e9e8d7"))
 			draw_circle(rect.position + Vector2(55, 41), 23, Color("cf8a6f"))
+			if not state.dish.is_empty():
+				for offset in [Vector2(-10, -7), Vector2(4, -11), Vector2(-2, 8), Vector2(12, 4)]:
+					draw_rect(Rect2(rect.position + Vector2(55, 41) + offset, Vector2(7, 5)), CREAM)
 	_label(rect.position + Vector2(8, -9), title, 13, CREAM)
 
 func _draw_table(rect: Rect2, occupied: bool) -> void:
@@ -408,44 +535,50 @@ func _draw_customer() -> void:
 
 func _draw_player() -> void:
 	var bounce := sin(walk_time) * 2.0 if moving else 0.0
-	var p := player + Vector2(0, bounce)
-	_ellipse(Rect2(p.x - 16, p.y + 16, 32, 8), Color("9b796e"))
-	draw_rect(Rect2(p.x - 12, p.y + 3, 10, 17), Color("5a5a6c"))
-	draw_rect(Rect2(p.x + 3, p.y + 3, 10, 17), Color("5a5a6c"))
-	draw_rect(Rect2(p.x - 14, p.y - 17, 28, 27), Color("e27f7a"))
-	draw_rect(Rect2(p.x - 8, p.y - 14, 16, 18), CREAM)
-	draw_circle(p + Vector2(0, -23), 13, Color("e6b08f"))
-	draw_rect(Rect2(p.x - 14, p.y - 37, 28, 9), Color("453e4b"))
-	draw_rect(Rect2(p.x - 15, p.y - 31, 7, 13), Color("453e4b"))
-	var eye_y := p.y - 23
-	if facing.y >= -0.5:
-		draw_rect(Rect2(p.x - 6, eye_y, 3, 3), DARK)
-		draw_rect(Rect2(p.x + 4, eye_y, 3, 3), DARK)
 	var carried_item := state.held(multiplayer.get_unique_id() if online else 1)
-	if carried_item != "":
-		draw_circle(p + Vector2(19, -12), 8, GOLD)
-		_label(p + Vector2(10, -39), carried_item.replace("_", " "), 12, CREAM)
+	var color_index := int(player_colors.get(str(multiplayer.get_unique_id()), 0)) if online else 0
+	_draw_avatar(player + Vector2(0, bounce), color_index, facing, "", carried_item)
 
 func _draw_teammate(pos: Vector2, id: int) -> void:
-	var p := pos
+	var color_index := int(player_colors.get(str(id), 1))
+	var look: Vector2 = player_facings.get(str(id), Vector2.DOWN)
+	var bob := sin(float(Time.get_ticks_msec()) / 115.0 + float(id % 9)) * 2.0 if bool(player_walking.get(str(id), false)) else 0.0
+	_draw_avatar(pos + Vector2(0, bob), color_index, look, "P%d" % (color_index + 1), state.held(id))
+
+func _draw_avatar(p: Vector2, color_index: int, look: Vector2, tag: String, item: String) -> void:
+	var outfits := [Color("e27f7a"), MINT, Color("d7ab73"), Color("a5a7d3")]
+	var outfit: Color = outfits[clampi(color_index, 0, outfits.size() - 1)]
+	var hair := Color("453e4b")
 	_ellipse(Rect2(p.x - 16, p.y + 16, 32, 8), Color("9b796e"))
 	draw_rect(Rect2(p.x - 12, p.y + 3, 10, 17), Color("566178"))
 	draw_rect(Rect2(p.x + 3, p.y + 3, 10, 17), Color("566178"))
-	draw_rect(Rect2(p.x - 14, p.y - 17, 28, 27), MINT)
+	draw_rect(Rect2(p.x - 14, p.y - 17, 28, 27), outfit)
 	draw_rect(Rect2(p.x - 8, p.y - 14, 16, 18), CREAM)
+	draw_rect(Rect2(p.x - 18, p.y - 12, 5, 15), Color("e6b08f"))
+	draw_rect(Rect2(p.x + 13, p.y - 12, 5, 15), Color("e6b08f"))
 	draw_circle(p + Vector2(0, -23), 13, Color("e6b08f"))
-	draw_rect(Rect2(p.x - 14, p.y - 37, 28, 9), Color("51485e"))
-	draw_rect(Rect2(p.x - 15, p.y - 31, 7, 13), Color("51485e"))
-	draw_rect(Rect2(p.x - 6, p.y - 23, 3, 3), DARK)
-	draw_rect(Rect2(p.x + 4, p.y - 23, 3, 3), DARK)
-	_label(p + Vector2(-10, -40), "P%02d" % (id % 100), 12, CREAM)
+	draw_rect(Rect2(p.x - 14, p.y - 37, 28, 9), hair)
+	if look.y < -0.5:
+		draw_rect(Rect2(p.x - 14, p.y - 31, 28, 15), hair)
+	elif look.x > 0.5:
+		draw_rect(Rect2(p.x + 5, p.y - 23, 3, 3), DARK)
+	elif look.x < -0.5:
+		draw_rect(Rect2(p.x - 8, p.y - 23, 3, 3), DARK)
+	else:
+		draw_rect(Rect2(p.x - 6, p.y - 23, 3, 3), DARK)
+		draw_rect(Rect2(p.x + 4, p.y - 23, 3, 3), DARK)
+	if tag != "": _label(p + Vector2(-10, -40), tag, 12, CREAM)
+	if item != "":
+		draw_circle(p + Vector2(20, -9), 8, GOLD)
+		_label(p + Vector2(10, -49), item.replace("_", " "), 12, CREAM)
 
 func _draw_hud() -> void:
 	draw_rect(Rect2(56, 6, 848, 40), Color("354856"))
 	_label(Vector2(71, 33), "DAY %d   %s" % [state.day, state.phase], 17, CREAM)
 	_label(Vector2(280, 33), "COINS  %d" % state.money, 17, GOLD)
 	_label(Vector2(445, 33), "SERVED  %d / %d" % [state.served, state.target_orders], 17, MINT)
-	_label(Vector2(680, 33), "%s  ·  N connect" % network_status, 12, CREAM)
+	var connection_label := "ROOM SEOUL" if online else "N JOIN ROOM" if network_status == "SOLO" else network_status
+	_label(Vector2(670, 33), "%s  ·  SFX %d%%" % [connection_label, 0 if sfx_muted else roundi(sfx_volume * 100.0)], 12, CREAM)
 	draw_rect(Rect2(56, 580, 848, 54), Color("354856"))
 	for i in range(6):
 		var x := 72 + i * 136
@@ -471,19 +604,19 @@ func _draw_cooking_panel() -> void:
 	for item in required:
 		ingredient_text += "%s %d/%d   " % [item.replace("_", " "), int(added.get(item, 0)), int(required[item])]
 	_label(Vector2(224, 194), ingredient_text, 14, DARK)
-	draw_circle(Vector2(480, 333), 111, Color("4c5660"))
-	draw_circle(Vector2(480, 333), 94, Color("d57756"))
-	draw_circle(Vector2(480, 333), 81, Color("e9945e"))
+	draw_circle(Vector2(480, 336), 91, Color("4c5660"))
+	draw_circle(Vector2(480, 336), 79, Color("d57756"))
+	draw_circle(Vector2(480, 336), 69, Color("e9945e"))
 	for i in range(10):
 		var angle := float(i) * TAU / 10.0 + walk_time * 0.05
-		var spot := Vector2(480, 333) + Vector2(cos(angle), sin(angle)) * (36 + i % 3 * 13)
+		var spot := Vector2(480, 336) + Vector2(cos(angle), sin(angle)) * (29 + i % 3 * 11)
 		draw_circle(spot, 8 if i % 2 == 0 else 5, CREAM if i % 2 == 0 else Color("8cae82"))
-	_label(Vector2(224, 226), "DRAG IN CIRCLES TO STIR", 14, DARK)
-	_label(Vector2(224, 247), "TEMP %d%%   COOK %d%%   MIX %d%%" % [int(float(state.session["temperature"]) * 100), int(float(state.session["doneness"]) * 100), int(float(state.session["mixing"]) * 100)], 15, DARK)
+	_label(Vector2(224, 219), "DRAG IN CIRCLES TO STIR", 14, DARK)
+	_label(Vector2(224, 239), "TEMP %d%%   COOK %d%%   MIX %d%%" % [int(float(state.session["temperature"]) * 100), int(float(state.session["doneness"]) * 100), int(float(state.session["mixing"]) * 100)], 15, DARK)
 	draw_rect(Rect2(270, 458, 420, 22), Color("6f7680"))
 	draw_rect(Rect2(270, 458, 420 * float(state.session["heat"]), 22), Color("df785e"))
 	draw_circle(Vector2(270 + 420 * float(state.session["heat"]), 469), 15, GOLD)
-	_label(Vector2(272, 444), "HEAT  •  DRAG SLIDER TO SET FLAME", 14, DARK)
+	_label(Vector2(272, 449), "HEAT  •  DRAG SLIDER TO SET FLAME", 14, DARK)
 	_label(Vector2(257, 501), "Gather at shelf • chop at prep • add at stove • plate at counter", 13, DARK)
 
 func _draw_menu() -> void:

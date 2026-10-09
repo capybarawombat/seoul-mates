@@ -1,0 +1,43 @@
+name: Build Web and deploy Pages
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    if: vars.SEOUL_MATES_WSS_URL != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Godot editor and Web export templates
+        run: |
+          curl -L --fail --silent --show-error -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          echo 'cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  godot.zip' | sha256sum -c -
+          unzip -q godot.zip
+          chmod +x Godot_v4.7.2-stable_linux.x86_64
+          curl -L --fail --silent --show-error -o templates.tpz https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+          echo 'f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011  templates.tpz' | sha256sum -c -
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -j -q templates.tpz 'templates/web_*.zip' 'templates/version.txt' -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+      - name: Check scripts and simulation
+        run: |
+          ./Godot_v4.7.2-stable_linux.x86_64 --headless --path . --editor --quit
+          ./Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script tests/test_state.gd
+      - name: Export release Web client
+        env:
+          SEOUL_GODOT: ./Godot_v4.7.2-stable_linux.x86_64
+          SEOUL_MATES_WSS_URL: ${{ vars.SEOUL_MATES_WSS_URL }}
+        run: python3 tools/export_web.py --wss-url "$SEOUL_MATES_WSS_URL"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+      - id: deployment
+        uses: actions/deploy-pages@v4

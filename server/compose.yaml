@@ -1,0 +1,30 @@
+services:
+  game:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "9090"
+    volumes:
+      - restaurant_data:/srv/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - game
+    environment:
+      SEOUL_MATES_DOMAIN: ${SEOUL_MATES_DOMAIN:?Set SEOUL_MATES_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  restaurant_data:
+  caddy_data:
+  caddy_config:

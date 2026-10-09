@@ -1,0 +1,7 @@
+{$SEOUL_MATES_DOMAIN} {
+    @socket path /socket
+    handle @socket {
+        reverse_proxy game:9090
+    }
+    respond "SEOUL MATES WebSocket endpoint" 404
+}
