@@ -20,6 +20,9 @@ var order: String = "tteokbokki"
 var phase: String = "PREPARATION"
 var message: String = "Gather ingredients at the shelf."
 var customer_patience: float = 1.0
+var customer_stage: String = "absent"
+var customer_position: Vector2 = Vector2(470, 545)
+var customer_waypoint: int = 0
 var action_count: int = 0
 var station_owner: int = 0
 
@@ -40,6 +43,9 @@ func start_shift() -> void:
 		phase = "OPEN"
 		order = "tteokbokki" if served % 2 == 0 else "ramyeon"
 		customer_patience = 1.0
+		customer_stage = "entering"
+		customer_position = Vector2(470, 545)
+		customer_waypoint = 0
 		message = "Customer ordered %s." % recipes[order]["name"]
 
 func held(player_id: int = 1) -> String:
@@ -130,7 +136,8 @@ func stir(amount: float) -> void:
 
 func tick(delta: float) -> void:
 	if phase == "OPEN":
-		customer_patience = maxf(0.0, customer_patience - delta / 210.0)
+		_tick_customer(delta)
+		if customer_stage == "seated": customer_patience = maxf(0.0, customer_patience - delta / 210.0)
 	if session.is_empty() or not ingredients_complete():
 		return
 	var heat: float = session["heat"]
@@ -144,6 +151,24 @@ func tick(delta: float) -> void:
 		session["burn"] = minf(1.0, float(session["burn"]) + delta * 0.055)
 	if float(session["doneness"]) > 1.0:
 		session["burn"] = minf(1.0, float(session["burn"]) + delta * 0.03)
+
+func _tick_customer(delta: float) -> void:
+	var arrival: Array[Vector2] = [Vector2(470, 500), Vector2(790, 500), Vector2(790, 458), Vector2(704, 458)]
+	var departure: Array[Vector2] = [Vector2(790, 458), Vector2(790, 500), Vector2(470, 500), Vector2(470, 545)]
+	if customer_stage != "entering" and customer_stage != "leaving": return
+	var path: Array[Vector2] = arrival if customer_stage == "entering" else departure
+	if customer_waypoint >= path.size(): return
+	customer_position = customer_position.move_toward(path[customer_waypoint], delta * 92.0)
+	if customer_position.distance_to(path[customer_waypoint]) < 0.5:
+		customer_waypoint += 1
+		if customer_waypoint >= path.size():
+			if customer_stage == "entering":
+				customer_stage = "seated"
+			else:
+				customer_stage = "entering"
+				customer_position = Vector2(470, 545)
+				customer_waypoint = 0
+				customer_patience = 1.0
 
 func plate(amount: float) -> bool:
 	if session.is_empty() or not ingredients_complete():
@@ -168,7 +193,7 @@ func plate(amount: float) -> bool:
 	return true
 
 func serve() -> bool:
-	if phase != "OPEN" or dish.is_empty() or dish["recipe"] != order:
+	if phase != "OPEN" or customer_stage != "seated" or dish.is_empty() or dish["recipe"] != order:
 		return false
 	var price: int = recipes[order]["price"]
 	var earned: int = roundi(float(price) * (0.5 + float(dish["quality"]) / 200.0) * (0.65 + customer_patience * 0.35))
@@ -178,10 +203,12 @@ func serve() -> bool:
 	action_count += 1
 	if served >= target_orders:
 		phase = "RESULTS"
+		customer_stage = "absent"
 		message = "Shift complete! Earned meals: %d. Press Enter for next day." % served
 	else:
 		order = "tteokbokki" if served % 2 == 0 else "ramyeon"
-		customer_patience = 1.0
+		customer_stage = "leaving"
+		customer_waypoint = 0
 		message = "+%d coins! Next order: %s." % [earned, recipes[order]["name"]]
 	return true
 
@@ -222,7 +249,7 @@ func load_game() -> bool:
 	return true
 
 func snapshot() -> Dictionary:
-	return {"version": 1, "money": money, "day": day, "served": served, "order": order, "phase": phase, "message": message, "inventory": inventory.duplicate(true), "carried_by": carried_by.duplicate(true), "dish": dish.duplicate(true), "session": session.duplicate(true), "customer_patience": customer_patience, "action_count": action_count, "station_owner": station_owner}
+	return {"version": 1, "money": money, "day": day, "served": served, "order": order, "phase": phase, "message": message, "inventory": inventory.duplicate(true), "carried_by": carried_by.duplicate(true), "dish": dish.duplicate(true), "session": session.duplicate(true), "customer_patience": customer_patience, "customer_stage": customer_stage, "customer_position": customer_position, "customer_waypoint": customer_waypoint, "action_count": action_count, "station_owner": station_owner}
 
 func apply_snapshot(data: Dictionary) -> bool:
 	if int(data.get("version", 0)) != 1:
@@ -238,6 +265,9 @@ func apply_snapshot(data: Dictionary) -> bool:
 	dish = data.get("dish", dish).duplicate(true)
 	session = data.get("session", session).duplicate(true)
 	customer_patience = float(data.get("customer_patience", customer_patience))
+	customer_stage = str(data.get("customer_stage", customer_stage))
+	customer_position = data.get("customer_position", customer_position)
+	customer_waypoint = int(data.get("customer_waypoint", customer_waypoint))
 	action_count = int(data.get("action_count", action_count))
 	station_owner = int(data.get("station_owner", station_owner))
 	carried = held(1)

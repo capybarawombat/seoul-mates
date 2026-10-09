@@ -391,19 +391,20 @@ func _draw_table(rect: Rect2, occupied: bool) -> void:
 	draw_rect(rect, Color("b77968"))
 	draw_rect(rect.grow(-7), Color("deb090"))
 	draw_circle(rect.get_center(), 18, Color("f5e1c6"))
-	if occupied and state.phase == "OPEN":
+	if occupied and state.customer_stage == "seated":
 		draw_circle(rect.get_center(), 9, Color("dc745b"))
 
 func _draw_customer() -> void:
-	if state.phase != "OPEN": return
-	var pos := Vector2(704, 458)
+	if state.phase != "OPEN" or state.customer_stage == "absent": return
+	var pos: Vector2 = state.customer_position
 	_ellipse(Rect2(pos.x - 17, pos.y + 13, 34, 7), Color("8e6c68"))
 	draw_rect(Rect2(pos.x - 12, pos.y - 6, 24, 28), Color("9ebaa5"))
 	draw_circle(pos + Vector2(0, -15), 13, Color("e5b59b"))
 	draw_rect(Rect2(pos.x - 12, pos.y - 27, 24, 9), Color("554c5b"))
-	_label(pos + Vector2(-40, -44), state.recipes[state.order]["name"], 13, CREAM)
-	draw_rect(Rect2(pos.x - 22, pos.y - 36, 44, 4), Color("534c58"))
-	draw_rect(Rect2(pos.x - 22, pos.y - 36, 44 * state.customer_patience, 4), MINT)
+	if state.customer_stage == "seated":
+		_label(pos + Vector2(-40, -44), state.recipes[state.order]["name"], 13, CREAM)
+		draw_rect(Rect2(pos.x - 22, pos.y - 36, 44, 4), Color("534c58"))
+		draw_rect(Rect2(pos.x - 22, pos.y - 36, 44 * state.customer_patience, 4), MINT)
 
 func _draw_player() -> void:
 	var bounce := sin(walk_time) * 2.0 if moving else 0.0

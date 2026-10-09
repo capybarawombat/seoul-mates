@@ -1,6 +1,6 @@
 # Architecture
 
-`scripts/restaurant_state.gd` is a deterministic, UI-independent restaurant simulation. It loads recipe definitions from `data/recipes.json`, tracks ingredient inventory, per-player carried items, one active cooking session, dish quality, orders, money and day state. Its snapshot format is versioned for network replication. A separate versioned save stores day, money and inventory.
+`scripts/restaurant_state.gd` is a deterministic, UI-independent restaurant simulation. It loads recipe definitions from `data/recipes.json`, tracks ingredient inventory, per-player carried items, one active cooking session, dish quality, customer route/stage, orders, money and day state. Its snapshot format is versioned for network replication. A separate versioned save stores day, money and inventory.
 
 `scripts/main.gd` renders the restaurant with Godot draw commands, handles keyboard and mouse input, validates local geometry, and manages the multiplayer peer. In solo play it runs the simulation locally. With `-- --server`, the same Godot scene becomes a dedicated WebSocket authority on port 9090. Browser and desktop clients send station actions and position updates. The server validates proximity, movement, inventory and the stove control owner before changing shared state, then sends snapshots.
 
